@@ -1,0 +1,232 @@
+---
+title: "Predicting Human Activities"
+author: "Expedito Pinto de Paula Junior"
+date: "11/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1.Synoposis
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this project is use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. This report describe: 
+
+1. How it was built the predict model; 
+2. How it was used cross validation; 
+3. What the expected out of sample error is; and 
+4. Why the choices was did. 
+
+For the validation model it was used the prediction model to predict 20 different test cases.
+
+# 2. Data Processing.
+
+## 2.1 Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+## 2.2 Data Loading
+
+The following code load data for training and testing from the devices.
+
+```{r LoadData}
+library(caret)
+library(knitr)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(e1071)
+library(RColorBrewer)
+library(corrplot)
+library(gbm)
+
+
+rm(list=ls())  # free up memory for the download of the data sets
+
+# Create Data Directory if not exist
+if (!file.exists("data")){
+     dir.create("data")
+}
+
+# Download file from the web
+fileURL_Training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileURL_Testing <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(fileURL_Training, destfile = "./data/plm-training.csv")
+download.file(fileURL_Testing, destfile = "./data/plm-testing.csv")
+
+# LoadFile
+train <- read.csv("./data/plm-training.csv")
+test <- read.csv("./data/plm-testing.csv")
+```
+
+## 2.2 Cleaning the input data.
+Missing values could be affect criation model, based on this is necessary to remove variables that contains missing values.
+
+* current dimension including missing values
+
+```{r dim1}
+dim(train)
+dim(test)
+```
+
+* cleaning data and remove invalid predictors
+```{r cleaning}
+# Clean Data and remove invalid predictors
+trainData <- train[,colSums(is.na(train)) == 0]
+testData <- test[,colSums(is.na(test)) == 0]
+
+# Remove first seven variables
+trainData <- trainData[,-c(1:7)]
+testData <- testData[,-c(1:7)]
+
+# Cleaning nearZeroVar
+NZV <- nearZeroVar(trainData)
+trainData <- trainData[,-NZV]
+
+```
+
+* cleaned dimension
+
+```{r dim2}
+dim(trainData)
+dim(testData)
+```
+
+## 2.3 Examining Variables
+
+The follow variables are available in the dataset provided for training set:
+
+```{r variable}
+colnames(trainData)
+colnames(testData)
+```
+
+## 2.4 Correlation Variables
+
+The correlation among variables is analyzed before proceeding to the predictive models in order to identify the most correlated variables in the dataset. 
+
+```{r correlation}
+# create correlation matrix and plot
+cor_matrix <- cor(trainData[,-53])
+corrplot(cor_matrix, order = "FPC", method="color", type="upper", tl.cex=0.8, tl.col=rgb(0,0,0))
+
+# get the highly correlated variables
+highCorr <- findCorrelation(cor_matrix, cutoff = 0.85)
+
+#show the highly correlated variables in training data set.
+names(trainData)[highCorr]
+
+```
+
+
+# 3. Prediction Model
+
+## 3.1 Introduction
+
+For the Prediction Model Building is used cross-validation approach that includes the use of the training set spliting it into training/test sets and them build a model on the training set and evaluate on the test set and in order to reduce error is applied the combined predictors. 
+
+## 3.1 Building the Prediction Model.
+
+```{r BuildingPM}
+inTrain <- createDataPartition(y=trainData$classe, p=3/4, list = FALSE)
+
+training <- trainData[inTrain,]
+testing <- trainData[-inTrain,]
+
+set.seed(1235)
+
+```
+
+### 3.1.1 Random Forest
+
+Evaluating accuracy of Randon Forest Method.
+
+```{r RandomForestMethod}
+# 1.model fit
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+mod_rf <- train(classe ~ ., data=training, method="rf", trControl=controlRF)
+mod_rf$finalModel
+
+# 2. prediction
+pred_rf <- predict(mod_rf, testing)
+confM_rf <- confusionMatrix(table(pred_rf, testing$classe))
+
+confM_rf
+
+# 3. ploting matrix result
+plot(confM_rf$table, col=confM_rf$byClass, main = paste("Random Forest - Accuracy = ", round(confM_rf$overall['Accuracy'], 4)))
+```
+
+### 3.1.2 Decision Trees
+
+Evaluating accuracy of Decision Trees Method.
+
+```{r DecisionTreesMethod}
+# 1. model fit
+ctrl_dt <- trainControl(method="repeatedcv", number = 10, repeats = 3)
+mod_dt <- train(classe ~ ., data=training, method="rpart", trControl = ctrl_dt)
+fancyRpartPlot(mod_dt$finalModel)
+
+# 2. prediction
+pred_dt <- predict(mod_dt, testing)
+confM_dt <- confusionMatrix(table(pred_dt,testing$classe))
+
+confM_dt
+
+# 3. ploting matrix result
+plot(confM_dt$table, col=confM_dt$byClass, main = paste("Decision Trees - Accuracy = ", round(confM_dt$overall['Accuracy'], 4)))
+```
+
+
+### 3.1.3 GBM - Generalized Boosting Model
+
+Evaluating accuracy of GBM.
+
+```{r GBM}
+# 1. model fit
+ctrl_gbm <- trainControl(method="repeatedcv", number = 5, repeats = 1)
+mod_gbm <- train(classe ~ ., data=training, method = "gbm", trControl = ctrl_gbm, verbose=FALSE)
+mod_gbm$finalModel
+
+# 2. prediction
+pred_gbm <- predict(mod_gbm, newdata=testing)
+confM_gbm <- confusionMatrix(table(pred_gbm,testing$classe))
+
+confM_gbm
+
+# 3. ploting matrix result
+plot(confM_gbm$table, col=confM_gbm$byClass, main = paste("GBM - Accuracy = ", round(confM_gbm$overall['Accuracy'], 4)))
+```
+
+## 3.2 Comparing Accurancy between model.
+
+The accuracy of the 3 regression models are in table bellow:
+
+```{r echo=FALSE, results='asis'}
+library(knitr)
+tbl <- data.frame("Method" = c("Random Forest", "Decision Tree", "Generalized Boosting Model - GBM"), "Accuracy" = c(round(confM_rf$overall['Accuracy'], 4),round(confM_dt$overall['Accuracy'], 4),round(confM_gbm$overall['Accuracy'], 4)))
+kable(tbl)
+
+```
+
+According with the previous table the most accuracy method is **Random Forest**.
+
+# 4. Predict the 20 quiz results
+
+Using the most accuracy method before is possible to apply the model to predict the 20 quiz results based in the "validation" data provided in '*pml-testing.csv*' file
+
+```{r Predict20quiz}
+predictTest <- predict(mod_rf, newdata=testData)
+predictTest
+```
+
+# 5. Conclusions
+
+1. Based in machine learning method is possible to build prediction models. The tidy dataset is the pre requirement for the best analysis as possible.
+2. The cross validation is based in the creation multiples prediction models and select the best accuracy model generated.
+3. Applying the most accuracy method is possible to achieve target results.
+
+
